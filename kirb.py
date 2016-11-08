@@ -4,6 +4,17 @@ import aiohttp
 import functools
 import async_timeout
 
+# Known bugs: Dirb-like size:x output represents request body size
+# I'm actually not sure what dirb is returning the size for, probably headers
+# TODO: make output more like dirb
+
+KIRB_BANNER = """ _  ___      _
+| |/ (_)_ __| |__
+| ' /| | '__| '_ \ 
+| . \| | |  | |_) |
+|_|\_\_|_|  |_.__/ v0.0 AxiomAdder (Alpha-Preview)"""
+
+
 class request(object):
     def __init__(self, url, operation, handler, ssl = False, data = []):
         self.url = url
@@ -17,11 +28,11 @@ class request(object):
 class kirb(object):
 
     OPS = ['GET', 'PUT', 'POST', 'DELETE']
-    def __init__(self, loop, generator, xhandler, max_con = 500, timeout = 50):
+    def __init__(self, loop, generator, xhandler, max_con = 50, timeout = 50):
         self.loop      = loop
         self.timeout   = timeout
         self.xhandler  = xhandler
-        self.gen_requests  = generator
+        self.generator = generator
         self.session   = aiohttp.ClientSession(loop=loop)
         self.semaphore = asyncio.Semaphore(max_con, loop=loop)
         self.opcalls   = { 'GET'    : self.session.get,
@@ -30,7 +41,7 @@ class kirb(object):
                            'DELETE' : self.session.delete }
 
     def set_request_generator(self, gen):
-        self.gen_requests = gen
+        self.generator = gen
 
     # TODO: Catch timeouts and other net-related errors, throw the requests into a retry bucket for later
     # Opcalls dictionary seemed like a good idea at first.. TODO: changeme?
@@ -66,19 +77,19 @@ class kirb(object):
     async def run(self):
 
         futures = []
-        for r in self.gen_requests:
+        for r in self.generator:
             futures = [f for f in futures if f.done() == False] # remove completed futures
 
             await self.semaphore.acquire() # ensure we have more then max_con connections
             futures.append(asyncio.ensure_future(self.timed_op(r)))
 
-        await asyncio.gather(*futures)
+        await asyncio.gather(*futures) # wait for remaining futures to finish
 
     def stop(self):
         self.session.close()
 
 # example code 
-def dirb_rest_scan(ip, wordlist, portlist):
+def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
     # catches 401 code generating requests, this is for dirb checks explained later on
     dcheck = []
 
@@ -92,14 +103,14 @@ def dirb_rest_scan(ip, wordlist, portlist):
             for w in generate_words_file(wp):
                 yield w
 
-    def gen_requests(ip, words, ports, ops, handler, ssl=False):
+    def gen_permutations(ip, words, ports, ops, handler, ssl=False):
         for p in ports:
             for w in words:
                 for op in ops:
                     if w[0] == '/':
                         w = w[1:]
                     url = ip + ':' + p + '/' + w
-                    yield request(url, op, handler, ssl)
+                    yield request(url, op, handler, ssl=ssl)
 
     def print_request(request, reply, reply_len, code = 0): # allow for code override
         t = reply.text()
@@ -128,12 +139,14 @@ def dirb_rest_scan(ip, wordlist, portlist):
             print_request(request, reply, len(t))
             return
 
-    ops = ['GET', 'PUT', 'POST', 'DELETE']
-    gen = gen_words_file(wordlist)
-    g = gen_requests(ip, gen, portlist, ops, reply_handler, ssl=False)
+    # uncomment and use this list if you want to test more operations
+    # ops = ['GET', 'PUT', 'POST', 'DELETE']
+    ops = ['GET']
+    gen_words = gen_words_file(wordlist)
+    gen_perms = gen_permutations(ip, gen_words, portlist, ops, reply_handler, ssl=ssl)
 
     loop = asyncio.get_event_loop()
-    k = kirb(loop, g, reply_handler)
+    k = kirb(loop, gen_perms, reply_handler)
     loop.run_until_complete(k.run())
 
     async def reply_dcheck_handler(request, reply):
@@ -160,10 +173,13 @@ def dirb_rest_scan(ip, wordlist, portlist):
 # This code demos some of kirb's data spewing/reading capability by reimplementing dirb, only faster
 if __name__ == "__main__":
     if len(sys.argv) != 4:
+        print(KIRB_BANNER)
         print('usage: scan.py <ip> <wordlist> <port1,port2,etc>')
         exit(1)
+    # TODO: yeah.. I should add some argparsing
     ports = sys.argv[3].split(',')
     wordlist = sys.argv[2]
     ip = sys.argv[1]
     dirb_rest_scan(ip, wordlist, ports)
+    # dirb_rest_scan(ip, wordlist, ports, ssl=True) # For SSL scans
 
