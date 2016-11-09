@@ -3,17 +3,12 @@ import asyncio
 import aiohttp
 import functools
 import async_timeout
+import argparse
+from argparse import RawTextHelpFormatter
 
 # Known bugs: Dirb-like size:x output represents request body size
 # I'm actually not sure what dirb is returning the size for, probably headers
 # TODO: make output more like dirb
-
-KIRB_BANNER = """ _  ___      _
-| |/ (_)_ __| |__
-| ' /| | '__| '_ \ 
-| . \| | |  | |_) |
-|_|\_\_|_|  |_.__/ v0.0 AxiomAdder (Alpha-Preview)"""
-
 
 class request(object):
     def __init__(self, url, operation, handler, ssl = False, data = []):
@@ -88,7 +83,7 @@ class kirb(object):
     def stop(self):
         self.session.close()
 
-# example code 
+# example code
 def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
     # catches 401 code generating requests, this is for dirb checks explained later on
     dcheck = []
@@ -172,14 +167,32 @@ def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
 
 # This code demos some of kirb's data spewing/reading capability by reimplementing dirb, only faster
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print(KIRB_BANNER)
-        print('usage: scan.py <ip> <wordlist> <port1,port2,etc>')
-        exit(1)
-    # TODO: yeah.. I should add some argparsing
-    ports = sys.argv[3].split(',')
-    wordlist = sys.argv[2]
-    ip = sys.argv[1]
-    dirb_rest_scan(ip, wordlist, ports)
-    # dirb_rest_scan(ip, wordlist, ports, ssl=True) # For SSL scans
+    parser = argparse.ArgumentParser(description='''
+ _  ___      _
+| |/ (_)_ __| |__
+| ' /| | '__| '_ \
+| . \| | |  | |_) |
+|_|\_\_|_|  |_.__/ v0.0 AxiomAdder (Alpha-Preview)''',
+formatter_class=RawTextHelpFormatter
+)
 
+    parser.add_argument('ip', type=str, nargs='?')
+    parser.add_argument('wordlist', type=str, nargs='?')
+    parser.add_argument('ports', type=str, nargs='?')
+    parser.add_argument('--ssl', action='store_true', help='Negotiate SSL')
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
+
+    args = parser.parse_args()
+
+    if not args.ip or not args.wordlist or not args.ports:
+        parser.print_help()
+        sys.exit(1)
+
+    ip = args.ip
+    wordlist = args.wordlist
+    ports = args.ports.split(',')
+
+    dirb_rest_scan(ip, wordlist, ports, ssl=args.ssl)
