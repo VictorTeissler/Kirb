@@ -11,23 +11,23 @@ from argparse import RawTextHelpFormatter
 # TODO: make output more like dirb
 
 class request(object):
-    def __init__(self, url, operation, reply_handler, error_handler = False, ssl = False, data = []):
+    def __init__(self, url, operation, on_reply, on_error = False, ssl = False, data = []):
         self.url = url
         self.ssl = ssl
         self.data = data
         self.tries = 0 # For future retry functionality
-        self.reply_handler = reply_handler
-        self.error_handler = error_handler
         self.operation = operation
+        self.on_reply = on_reply
+        self.on_error = on_error
 
 
 class kirb(object):
-    def __init__(self, loop, generator, xhandler, max_con = 50, timeout = 5):
+    def __init__(self, loop, generator, max_con = 50, timeout = 5):
         self.loop      = loop
         self.timeout   = timeout
-        self.xhandler  = xhandler
-        self.generator = generator
+        self.retries   = []
         self.session   = aiohttp.ClientSession(loop=loop)
+        self.generator = generator
         self.semaphore = asyncio.Semaphore(max_con, loop=loop)
         self.opcalls   = { 'GET'    : self.session.get,
                            'PUT'    : self.session.put,
@@ -38,6 +38,17 @@ class kirb(object):
     def set_request_generator(self, gen):
         self.generator = gen
 
+
+    def set_timeout(self, timeout):
+        self.timeout = timeout
+
+
+    def get_cookies(self):
+        pass # TODO: return current session cookies
+
+
+    def set_cookies(self):
+        pass # TODO: set or clear current session cookies
 
     # Opcalls dictionary seemed like a good idea at first.. TODO: changeme?
     async def timed_op(self, request):
@@ -55,25 +66,25 @@ class kirb(object):
                 else:
                     reply = await self.opcalls[request.operation](url)
 
-                await self.handler(request, reply)
+                await self._on_reply(request, reply)
                 await reply.text() # TODO: can we interrupt http replies and keep the same tcp session?
 
         except aiohttp.errors.ClientOSError as e:
-            await self.error_handler(request, e)
+            if self._on_error != False:
+                await self.on_error(request, e)
 
         except asyncio.TimeoutError as e:
-        #    await self.error_handler(request, e)
+        #    await self.on_error(request, e)
             pass # Need to make exception parsing easier on lib users
 
         self.semaphore.release()
 
+    async def _on_reply(self, request, reply):
+        await request.on_reply(request, reply)
 
-    async def handler(self, request, reply):
-        await request.reply_handler(request, reply)
 
-
-    async def error_handler(self, request, error):
-        await request.error_handler(request, error)
+    async def _on_error(self, request, error):
+        await request.on_error(request, error)
 
 
     async def run(self):
@@ -91,7 +102,7 @@ class kirb(object):
         self.session.close()
 
 
-def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
+def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
 
     # catches 401 code generating requests, this is for dirb checks explained later on
     dcheck = []
@@ -108,14 +119,18 @@ def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
                 yield w
 
 
-    def gen_permutations(ip, words, ports, ops, reply_handler, error_handler, ssl=False):
+    def gen_permutations(ip, words, ports, ops, on_reply, on_error, ssl=False):
         for p in ports:
             for w in words:
                 for op in ops:
-                    if w[0] == '/':
-                        w = w[1:]
-                    url = ip + ':' + p + '/' + w
-                    yield request(url, op, reply_handler, error_handler, ssl=ssl)
+                    if p == '':
+                        continue
+                    else:
+                        p = ':' + p
+                    if w != '' and w[0] != '/':
+                        w = '/' + w
+                    url = ip + p + w
+                    yield request(url, op, on_reply, on_error, ssl=ssl)
 
 
     def print_request(request, reply, reply_len, code = 0): # allow for code override
@@ -125,14 +140,14 @@ def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
         print("+ " + request.url + ' (CODE:' + str(code) + '|' + request.operation + '|SIZE:' + str(reply_len) + ')')
 
 
-    async def error_handler(request, error):
+    async def on_error(request, error):
         # TODO: prototype some kind of back-off algorithm to reduce congestion related errors
         # Should this live in kirb, be external, or some kind of mix-in object..
         if error.errno != 111: # TCP connect failed. TODO: actually handle this
             print(error)
 
 
-    async def reply_handler(request, reply):
+    async def on_reply(request, reply):
         t = await reply.read()
         x = len(reply.headers)
         code = reply.status
@@ -158,10 +173,10 @@ def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
     # ops = ['GET', 'PUT', 'POST', 'DELETE']
     ops = ['GET']
     gen_words = gen_words_file(wordlist)
-    gen_perms = gen_permutations(ip, gen_words, portlist, ops, reply_handler, error_handler, ssl=ssl)
+    gen_perms = gen_permutations(ip, gen_words, portlist, ops, on_reply, on_error, ssl=ssl)
 
     loop = asyncio.get_event_loop()
-    k = kirb(loop, gen_perms, reply_handler)
+    k = kirb(loop, gen_perms, connections)
     loop.run_until_complete(k.run())
 
 
@@ -202,7 +217,8 @@ formatter_class=RawTextHelpFormatter
     parser.add_argument('ip', type=str, nargs='?')
     parser.add_argument('wordlist', type=str, nargs='?')
     parser.add_argument('ports', type=str, nargs='?')
-    parser.add_argument('--ssl', action='store_true', help='Negotiate SSL')
+    parser.add_argument('-s', '--ssl', action='store_true', help='Negotiate SSL')
+    parser.add_argument('-m', '--max', type=int, help='Max connections')
 
     if len(sys.argv) == 1:
         parser.print_help()
