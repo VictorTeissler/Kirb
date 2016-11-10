@@ -16,19 +16,18 @@ KIRB_BANNER = """ _  ___      _
 
 
 class request(object):
-    def __init__(self, url, operation, handler, ssl = False, data = []):
+    def __init__(self, url, operation, reply_handler, error_handler = False, ssl = False, data = []):
         self.url = url
         self.ssl = ssl
         self.data = data
         self.tries = 0 # For future retry functionality
-        self.handler = handler
+        self.reply_handler = reply_handler
+        self.error_handler = error_handler
         self.operation = operation
-    pass
+
 
 class kirb(object):
-
-    OPS = ['GET', 'PUT', 'POST', 'DELETE']
-    def __init__(self, loop, generator, xhandler, max_con = 50, timeout = 50):
+    def __init__(self, loop, generator, xhandler, max_con = 2, timeout = 5):
         self.loop      = loop
         self.timeout   = timeout
         self.xhandler  = xhandler
@@ -40,14 +39,15 @@ class kirb(object):
                            'POST'   : self.session.post,
                            'DELETE' : self.session.delete }
 
+
     def set_request_generator(self, gen):
         self.generator = gen
 
-    # TODO: Catch timeouts and other net-related errors, throw the requests into a retry bucket for later
+
     # Opcalls dictionary seemed like a good idea at first.. TODO: changeme?
     async def timed_op(self, request):
-        with async_timeout.timeout(self.timeout, loop=self.session.loop):
-            try:
+        try:
+            with async_timeout.timeout(self.timeout, loop=self.session.loop):
                 request.tries += 1
 
                 if request.ssl == False:
@@ -55,41 +55,48 @@ class kirb(object):
                 elif request.ssl == True:
                     url = 'https://' + request.url
 
-                if len(request.data) > 0: # conditionally supply post data
+                if len(request.data) > 0:
                     reply = await self.opcalls[request.operation](url, data=request.data)
                 else:
                     reply = await self.opcalls[request.operation](url)
 
                 await self.handler(request, reply)
-                await reply.text() # TODO: don't wait for data?
+                await reply.text() # TODO: can we interrupt http replies and keep the same tcp session?
 
-                self.semaphore.release()
+        except aiohttp.errors.ClientOSError as e:
+            await self.error_handler(request, e)
 
-            except(aiohttp.errors.ClientOSError):
-                print("ClientOSError:")
-            #except:
-            #    print('uncaught error')
+        except asyncio.TimeoutError as e:
+            await self.error_handler(request, e)
+
+        self.semaphore.release()
+
 
     async def handler(self, request, reply):
-        # TODO: track performance metrics
-        await request.handler(request, reply)
+        await request.reply_handler(request, reply)
+
+
+    async def error_handler(self, request, error):
+        await request.error_handler(request, error)
+
 
     async def run(self):
-
         futures = []
         for r in self.generator:
-            futures = [f for f in futures if f.done() == False] # remove completed futures
+            futures = [f for f in futures if f.done() == False]
 
-            await self.semaphore.acquire() # ensure we have more then max_con connections
+            await self.semaphore.acquire()
             futures.append(asyncio.ensure_future(self.timed_op(r)))
 
         await asyncio.gather(*futures) # wait for remaining futures to finish
 
+
     def stop(self):
         self.session.close()
 
-# example code 
+
 def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
+
     # catches 401 code generating requests, this is for dirb checks explained later on
     dcheck = []
 
@@ -98,25 +105,36 @@ def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
             for l in words.readlines():
                 yield l[:-1]
 
+
     def gen_words_file_multi(word_filepaths):
         for wp in word_filepaths:
             for w in generate_words_file(wp):
                 yield w
 
-    def gen_permutations(ip, words, ports, ops, handler, ssl=False):
+
+    def gen_permutations(ip, words, ports, ops, reply_handler, error_handler, ssl=False):
         for p in ports:
             for w in words:
                 for op in ops:
                     if w[0] == '/':
                         w = w[1:]
                     url = ip + ':' + p + '/' + w
-                    yield request(url, op, handler, ssl=ssl)
+                    yield request(url, op, reply_handler, error_handler, ssl=ssl)
+
 
     def print_request(request, reply, reply_len, code = 0): # allow for code override
         t = reply.text()
         if code == 0:
             code = reply.status
         print("+ " + request.url + ' (CODE:' + str(code) + '|' + request.operation + '|SIZE:' + str(reply_len) + ')')
+
+
+    async def error_handler(request, error):
+        # TODO: prototype some kind of back-off algorithm to reduce congestion related errors
+        # Should this live in kirb, be external, or some kind of mix-in object..
+        if error.errno != 111: # TCP connect failed. TODO: actually handle this
+            print(error)
+
 
     async def reply_handler(request, reply):
         t = await reply.read()
@@ -139,15 +157,17 @@ def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
             print_request(request, reply, len(t))
             return
 
+
     # uncomment and use this list if you want to test more operations
     # ops = ['GET', 'PUT', 'POST', 'DELETE']
     ops = ['GET']
     gen_words = gen_words_file(wordlist)
-    gen_perms = gen_permutations(ip, gen_words, portlist, ops, reply_handler, ssl=ssl)
+    gen_perms = gen_permutations(ip, gen_words, portlist, ops, reply_handler, error_handler, ssl=ssl)
 
     loop = asyncio.get_event_loop()
     k = kirb(loop, gen_perms, reply_handler)
     loop.run_until_complete(k.run())
+
 
     async def reply_dcheck_handler(request, reply):
         t = await reply.read()
@@ -156,6 +176,7 @@ def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
         if code == 404:
             request.url = request.url[:-1]
             print_request(request, reply, len(t), 401)
+
 
     # dirb 401 verification check works by re-issuing the same request with the url suffixed with a '_' character
     # if the resulting response has a 404 error code, the 401 destination is considered valid
@@ -166,20 +187,23 @@ def dirb_rest_scan(ip, wordlist, portlist, ssl=False):
             r.handler = reply_dcheck_handler
             yield r
 
+
     k.set_request_generator(gen_dcheck_requests())
     loop.run_until_complete(k.run())
+
     k.stop() # terminates the aiohttp session, otherwise it'll complain
 
-# This code demos some of kirb's data spewing/reading capability by reimplementing dirb, only faster
 if __name__ == "__main__":
     if len(sys.argv) != 4:
         print(KIRB_BANNER)
         print('usage: scan.py <ip> <wordlist> <port1,port2,etc>')
         exit(1)
+
     # TODO: yeah.. I should add some argparsing
     ports = sys.argv[3].split(',')
     wordlist = sys.argv[2]
     ip = sys.argv[1]
+
     dirb_rest_scan(ip, wordlist, ports)
     # dirb_rest_scan(ip, wordlist, ports, ssl=True) # For SSL scans
 
