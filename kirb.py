@@ -8,21 +8,23 @@ from argparse import RawTextHelpFormatter
 
 # Known bugs: Dirb-like size:x output represents request body size
 # I'm actually not sure what dirb is returning the size for, probably headers
-# TODO: make output more like dirb
-
+# TODO: make output more like dirb or gobuster since that seems to be the leading tool
+# TODO: Support changing user agents
+# TODO: Add basic auth
+# TODO: !!! Handle retries
 class request(object):
     def __init__(self, url, operation, on_reply, on_error = False, ssl = False, data = []):
-        self.url = url
-        self.ssl = ssl
-        self.data = data
-        self.tries = 0 # For future retry functionality
+        self.url       = url
+        self.ssl       = ssl
+        self.data      = data
+        self.tries     = 0 # For future retry functionality
         self.operation = operation
-        self.on_reply = on_reply
-        self.on_error = on_error
+        self.on_reply  = on_reply
+        self.on_error  = on_error
 
 
 class kirb(object):
-    def __init__(self, loop, generator, max_con = 50, timeout = 5):
+    def __init__(self, loop, generator, max_con = 20, timeout = 5):
         self.loop      = loop
         self.timeout   = timeout
         self.retries   = []
@@ -50,6 +52,7 @@ class kirb(object):
     def set_cookies(self):
         pass # TODO: set or clear current session cookies
 
+
     # Opcalls dictionary seemed like a good idea at first.. TODO: changeme?
     async def timed_op(self, request):
         try:
@@ -67,7 +70,7 @@ class kirb(object):
                     reply = await self.opcalls[request.operation](url)
 
                 await self._on_reply(request, reply)
-                await reply.text() # TODO: can we interrupt http replies and keep the same tcp session?
+                await reply.read()
 
         except aiohttp.errors.ClientOSError as e:
             if self._on_error != False:
@@ -78,6 +81,7 @@ class kirb(object):
             pass # Need to make exception parsing easier on lib users
 
         self.semaphore.release()
+
 
     async def _on_reply(self, request, reply):
         await request.on_reply(request, reply)
@@ -101,15 +105,16 @@ class kirb(object):
     def stop(self):
         self.session.close()
 
-
+# Implements a dirb-esque scan
 def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
-
+    import urllib
     # catches 401 code generating requests, this is for dirb checks explained later on
     dcheck = []
 
     def gen_words_file(word_filepath):
-        with open(word_filepath, 'r') as words:
+        with open(word_filepath, 'rb') as words:
             for l in words.readlines():
+                l = urllib.parse.unquote(l.decode('utf8'))
                 yield l[:-1]
 
 
@@ -122,14 +127,15 @@ def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
     def gen_permutations(ip, words, ports, ops, on_reply, on_error, ssl=False):
         for p in ports:
             for w in words:
+                if w == '':
+                    continue
+                elif w[0] == '/': # we add a slash
+                    w = w[1:]
+
                 for op in ops:
                     if p == '':
                         continue
-                    else:
-                        p = ':' + p
-                    if w != '' and w[0] != '/':
-                        w = '/' + w
-                    url = ip + p + w
+                    url = ip + ':' + p + '/' + w
                     yield request(url, op, on_reply, on_error, ssl=ssl)
 
 
@@ -154,21 +160,26 @@ def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
 
         if code == 404: # invalid endpoint
             return
+
         if code == 400:
             print_request(request, reply, len(t))
             return
+        
         if code == 401:
             dcheck.append(request) # catch the 401 request for dirb verification
             return
+        
         if code == 200:
             print_request(request, reply, len(t))
             return
+        
         if code == 403:
-            print('403 - look for net errors')
-            print_request(request, reply, len(t))
+            #TODO: Special handling?
+            #print('403 - look for net errors')
+            #print_request(request, reply, len(t))
             return
 
-
+    # TODO: Make this command line configurable
     # uncomment and use this list if you want to test more operations
     # ops = ['GET', 'PUT', 'POST', 'DELETE']
     ops = ['GET']
@@ -204,6 +215,7 @@ def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
 
     k.stop() # terminates the aiohttp session, otherwise it'll complain
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='''
  _  ___      _
@@ -211,8 +223,7 @@ if __name__ == "__main__":
 | ' /| | '__| '_ \ 
 | . \| | |  | |_) |
 |_|\_\_|_|  |_.__/ v0.0 AxiomAdder (Alpha-Preview)''',
-formatter_class=RawTextHelpFormatter
-)
+    formatter_class=RawTextHelpFormatter)
 
     parser.add_argument('ip', type=str, nargs='?')
     parser.add_argument('wordlist', type=str, nargs='?')
