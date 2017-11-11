@@ -31,7 +31,8 @@ class kirb(object):
         self.session   = aiohttp.ClientSession(loop=loop)
         self.generator = generator
         self.semaphore = asyncio.Semaphore(max_con, loop=loop)
-        self.opcalls   = { 'GET'    : self.session.get,
+        self.opcalls   = { 'HEAD'   : self.session.head,
+                           'GET'    : self.session.get,
                            'PUT'    : self.session.put,
                            'POST'   : self.session.post,
                            'DELETE' : self.session.delete }
@@ -70,7 +71,7 @@ class kirb(object):
                     reply = await self.opcalls[request.operation](url)
 
                 await self._on_reply(request, reply)
-                await reply.read()
+                #await reply.read()
 
         except aiohttp.errors.ClientOSError as e:
             if self._on_error != False:
@@ -230,6 +231,7 @@ if __name__ == "__main__":
     parser.add_argument('ports', type=str, nargs='?')
     parser.add_argument('-s', '--ssl', action='store_true', help='Negotiate SSL')
     parser.add_argument('-m', '--max', type=int, help='Max connections')
+    parser.add_argument('-t', '--timeout', type=int, help='Timeout in seconds')
 
     if len(sys.argv) == 1:
         parser.print_help()
