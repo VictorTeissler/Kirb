@@ -13,7 +13,7 @@ from argparse import RawTextHelpFormatter
 # TODO: Add basic auth
 # TODO: !!! Handle retries
 class request(object):
-    def __init__(self, url, operation, on_reply, on_error = False, ssl = False, data = []):
+    def __init__(self, url, operation, on_reply, on_error = False, ssl = False, data = [], timeout=5):
         self.url       = url
         self.ssl       = ssl
         self.data      = data
@@ -21,7 +21,7 @@ class request(object):
         self.operation = operation
         self.on_reply  = on_reply
         self.on_error  = on_error
-
+        self.timeout   = timeout
 
 class kirb(object):
     def __init__(self, loop, generator, max_con = 20, timeout = 5):
@@ -73,13 +73,11 @@ class kirb(object):
                 await self._on_reply(request, reply)
                 #await reply.read()
 
-        except aiohttp.errors.ClientOSError as e:
-            if self._on_error != False:
-                await self.on_error(request, e)
+        except aiohttp.ClientOSError as e:
+            await self._on_error(request, e)
 
         except asyncio.TimeoutError as e:
-        #    await self.on_error(request, e)
-            pass # Need to make exception parsing easier on lib users
+            await self._on_error(request, e)
 
         self.semaphore.release()
 
@@ -89,7 +87,8 @@ class kirb(object):
 
 
     async def _on_error(self, request, error):
-        await request.on_error(request, error)
+        if request.on_error != None:
+            await request.on_error(request, error)
 
 
     async def run(self):
@@ -107,7 +106,7 @@ class kirb(object):
         self.session.close()
 
 # Implements a dirb-esque scan
-def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
+def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False, timeout=5):
     import urllib
     # catches 401 code generating requests, this is for dirb checks explained later on
     dcheck = []
@@ -115,8 +114,8 @@ def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
     def gen_words_file(word_filepath):
         with open(word_filepath, 'rb') as words:
             for l in words.readlines():
-                l = urllib.parse.unquote(l.decode('utf8'))
-                yield l[:-1]
+                l = urllib.parse.unquote(l[:-1].decode('utf8')) # FIXME: is this right? I dunno
+                yield l
 
 
     def gen_words_file_multi(word_filepaths):
@@ -128,10 +127,10 @@ def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
     def gen_permutations(ip, words, ports, ops, on_reply, on_error, ssl=False):
         for p in ports:
             for w in words:
-                if w == '':
-                    continue
-                elif w[0] == '/': # we add a slash
-                    w = w[1:]
+#                if w == '':
+#                    continue
+#                elif w[0] == '/': # we add a slash
+#                    w = w[1:]
 
                 for op in ops:
                     if p == '':
@@ -151,7 +150,7 @@ def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
         # TODO: prototype some kind of back-off algorithm to reduce congestion related errors
         # Should this live in kirb, be external, or some kind of mix-in object..
         if error.errno != 111: # TCP connect failed. TODO: actually handle this
-            print(error)
+            print(str(error.errno) + ' ' + str(error))
 
 
     async def on_reply(request, reply):
@@ -182,15 +181,14 @@ def dirb_rest_scan(ip, wordlist, portlist, connections = 50, ssl=False):
 
     # TODO: Make this command line configurable
     # uncomment and use this list if you want to test more operations
-    # ops = ['GET', 'PUT', 'POST', 'DELETE']
+    #ops = ['GET', 'PUT', 'POST', 'DELETE']
     ops = ['GET']
     gen_words = gen_words_file(wordlist)
     gen_perms = gen_permutations(ip, gen_words, portlist, ops, on_reply, on_error, ssl=ssl)
 
     loop = asyncio.get_event_loop()
-    k = kirb(loop, gen_perms, connections)
+    k = kirb(loop, gen_perms, connections, timeout=timeout)
     loop.run_until_complete(k.run())
-
 
     async def reply_dcheck_handler(request, reply):
         t = await reply.read()
@@ -223,7 +221,7 @@ if __name__ == "__main__":
 | |/ (_)_ __| |__
 | ' /| | '__| '_ \ 
 | . \| | |  | |_) |
-|_|\_\_|_|  |_.__/ v0.0 AxiomAdder (Alpha-Preview)''',
+|_|\_\_|_|  |_.__/ v0.1.1''',
     formatter_class=RawTextHelpFormatter)
 
     parser.add_argument('ip', type=str, nargs='?')
@@ -231,7 +229,7 @@ if __name__ == "__main__":
     parser.add_argument('ports', type=str, nargs='?')
     parser.add_argument('-s', '--ssl', action='store_true', help='Negotiate SSL')
     parser.add_argument('-m', '--max', type=int, help='Max connections')
-    parser.add_argument('-t', '--timeout', type=int, help='Timeout in seconds')
+    parser.add_argument('-t', '--timeout', type=float, help='Timeout in seconds')
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -247,4 +245,4 @@ if __name__ == "__main__":
     wordlist = args.wordlist
     ports = args.ports.split(',')
 
-    dirb_rest_scan(ip, wordlist, ports, ssl=args.ssl)
+    dirb_rest_scan(ip, wordlist, ports, ssl=args.ssl, timeout=args.timeout)
