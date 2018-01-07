@@ -23,11 +23,17 @@ class dirb_scan(object):
         self.ssl         = ssl
         self.timeout     = timeout
         self.dcheck      = []        
+        self.total       = 0
 
     def gen_words_file(self, word_filepath):
         with open(word_filepath, 'rb') as words:
             for l in words.readlines():
-                l = urllib.parse.unquote(l[:-1].decode('utf8')) # FIXME: is this right? I dunno
+                if l[-2:] == b'\x0d\x0a':
+                    l = l[:-2]
+                elif l[-1:] == b'\x0a':
+                    l = l[:-1]
+
+                l = urllib.parse.quote_from_bytes(l)
                 yield l
 
 
@@ -99,7 +105,13 @@ class dirb_scan(object):
     async def scan(self):
         ops = ['GET']
         gen_words = self.gen_words_file(wordlist)
-        gen_perms = self.gen_permutations(self.host, gen_words, self.portlist, ops, self.on_reply, self.on_error, ssl=self.ssl)
+        gen_perms = self.gen_permutations(self.host,
+                                          gen_words,
+                                          self.portlist,
+                                          ops,
+                                          self.on_reply,
+                                          self.on_error,
+                                          ssl=self.ssl)
     
         k = Kirb(self.loop, gen_perms, self.connections, timeout=self.timeout)
         await k.run()
@@ -113,7 +125,7 @@ class dirb_scan(object):
         x = reply.headers
         code = reply.status
         if code == 404:
-            request.url = request.url[:-1]
+            request.url = request.url + '/'
             print_request(request, reply, len(t), 401)
 
     def print_request(self, request, reply, reply_len, code = 0): # allow for code override
@@ -121,7 +133,7 @@ class dirb_scan(object):
         if code == 0:
             code = reply.status
         print("+ " + request.url + ' (CODE:' + str(code) + '|' + request.operation + '|SIZE:' + str(reply_len) + ')')
-
+        self.total += 1
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='''
@@ -156,4 +168,4 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     scanner = dirb_scan(loop, ip, wordlist, ports, ssl=args.ssl, timeout=args.timeout)
     loop.run_until_complete(scanner.scan())
-
+    print("total: ", scanner.total)

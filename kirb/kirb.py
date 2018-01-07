@@ -21,6 +21,7 @@ class Request(object):
         self.on_error  = on_error
         self.timeout   = timeout
 
+
 class Kirb(object):
     def __init__(self, loop, generator, max_con = 20, timeout = 5):
         self.loop      = loop
@@ -69,7 +70,7 @@ class Kirb(object):
                     reply = await self.opcalls[request.operation](url)
 
                 await self._on_reply(request, reply)
-                #await reply.read()
+                #await reply.read() # IS THIS NECESSARY?
 
         except aiohttp.ClientOSError as e:
             await self._on_error(request, e)
