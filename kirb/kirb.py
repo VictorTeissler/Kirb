@@ -62,7 +62,7 @@ class Kirb(object):
                 elif request.ssl == True:
                     url = 'https://' + request.url
                 reply = await self.opcalls[request.operation](url, data=request.data, allow_redirects=False)
-                await reply.text()
+                #await reply.text()
             await self._on_reply(request, reply)
 
         except aiohttp.ClientOSError as e:
