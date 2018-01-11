@@ -27,7 +27,7 @@ class Kirb(object):
         self.loop      = loop
         self.timeout   = timeout
         self.retries   = []
-        self.session   = aiohttp.ClientSession(loop=loop)
+        self.session   = aiohttp.ClientSession(loop=loop, connector=aiohttp.TCPConnector(limit=max_con))
         self.generator = generator
         self.semaphore = asyncio.Semaphore(max_con, loop=loop)
         self.opcalls   = { 'HEAD'   : self.session.head,
@@ -35,7 +35,6 @@ class Kirb(object):
                            'PUT'    : self.session.put,
                            'POST'   : self.session.post,
                            'DELETE' : self.session.delete }
-
 
     def set_request_generator(self, gen):
         self.generator = gen
@@ -53,24 +52,18 @@ class Kirb(object):
         pass # TODO: set or clear current session cookies
 
 
-    # Opcalls dictionary seemed like a good idea at first.. TODO: changeme?
     async def timed_op(self, request):
         try:
-            with async_timeout.timeout(self.timeout, loop=self.session.loop):
+            with async_timeout.timeout(self.timeout, loop=self.session.loop) as cm:
                 request.tries += 1
 
                 if request.ssl == False:
                     url = 'http://' + request.url
                 elif request.ssl == True:
                     url = 'https://' + request.url
-
-                if len(request.data) > 0:
-                    reply = await self.opcalls[request.operation](url, data=request.data)
-                else:
-                    reply = await self.opcalls[request.operation](url)
-
-                await self._on_reply(request, reply)
-                #await reply.read() # IS THIS NECESSARY?
+                reply = await self.opcalls[request.operation](url, data=request.data, allow_redirects=False)
+                await reply.text()
+            await self._on_reply(request, reply)
 
         except aiohttp.ClientOSError as e:
             await self._on_error(request, e)

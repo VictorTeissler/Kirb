@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 import sys
 import argparse
+import asyncio
+import urllib
+import time
 from argparse import RawTextHelpFormatter
-
 from kirb import Kirb
 from kirb import Request
-import asyncio
 
-import urllib
+# TODO: In limited tests, this did not improve speed. Perhaps later?
+#import uvloop
+#asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 # Known bugs: Dirb-like size:x output represents request body size
 # I'm actually not sure what dirb is returning the size for, probably headers
@@ -30,6 +33,7 @@ class dirb_scan(object):
 
     def gen_words_file(self, word_filepath):
         with open(word_filepath, 'rb') as words:
+            # This mess is intended to resolve some format quirks in dirb wordlists
             for l in words.readlines():
                 if l[-2:] == b'\x0d\x0a':
                     l = l[:-2]
@@ -53,6 +57,7 @@ class dirb_scan(object):
                     if p == '':
                         continue
                     url = ip + ':' + p + '/' + w
+                    self.total_reqs += 1
                     yield Request(url, op, self.on_reply, self.on_error, ssl=ssl)
 
 
@@ -116,12 +121,24 @@ class dirb_scan(object):
                                           self.on_error,
                                           ssl=self.ssl)
     
+        self.total_reqs = 0
+        self.start_time = time.time()
         k = Kirb(self.loop, gen_perms, self.connections, timeout=self.timeout)
         await k.run()
 
         k.set_request_generator(self.gen_dcheck_requests())
         await k.run()
+
+        self.stop_time = time.time()
+        self.show_stats()
+        print("Closing out connections...")
         k.stop() # terminates the aiohttp session, otherwise it'll complain
+
+    def show_stats(self):
+        rps = self.total_reqs / (self.stop_time - self.start_time)
+        print("Requests per second: " + str(rps))
+        print("Requests total: "      + str(self.total_reqs))
+        print("200 responses: "       + str(self.total))
 
     async def reply_dcheck_handler(request, reply):
         t = await reply.read()
