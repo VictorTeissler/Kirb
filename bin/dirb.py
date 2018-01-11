@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import argparse
 from argparse import RawTextHelpFormatter
@@ -24,6 +25,8 @@ class dirb_scan(object):
         self.timeout     = timeout
         self.dcheck      = []        
         self.total       = 0
+        self.total_reqs  = 0
+        self.start_time  = 0
 
     def gen_words_file(self, word_filepath):
         with open(word_filepath, 'rb') as words:

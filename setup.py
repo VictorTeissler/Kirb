@@ -1,13 +1,24 @@
 #!/usr/bin/env python
 
-from distutils.core import setup
+from setuptools import setup
 
-setup(name="Kirb",
+setup(name="kirb",
       version='0.1',
       description='Async directory buster',
       author='Victor Teissler',
-      author-email='nopenopenope',
+      author_email='nope@nope.nope',
       url='zombo.com',
-      scripts=['kirb/kirb']
+      packages=['kirb'],
+      scripts=['bin/dirb.py'],
+      install_requires=[
+            'aiohttp',
+            'async-timeout',
+            'asyncio',
+            'chardet',
+            'idna',
+            'multidict',
+            'yarl'
+      ]
+
 )
 
