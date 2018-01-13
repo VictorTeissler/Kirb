@@ -18,7 +18,7 @@ from kirb import Request
 
 # Implements a dirb-esque scan
 class dirb_scan(object):
-    def __init__(self, loop, url, wordlist, connections = 50, timeout=5):
+    def __init__(self, loop, url, wordlist, connections, timeout, show_stats):
         self.loop        = loop
         self.url         = url
         self.wordlist    = wordlist
@@ -28,6 +28,7 @@ class dirb_scan(object):
         self.total       = 0
         self.total_reqs  = 0
         self.start_time  = 0
+        self.show_stats  = show_stats
 
     def gen_words_file(self, word_filepath):
         with open(word_filepath, 'rb') as words:
@@ -124,11 +125,15 @@ class dirb_scan(object):
         await k.run()
 
         self.stop_time = time.time()
-        self.show_stats()
+        self.print_stats()
         print("Closing out connections...")
         k.stop() # terminates the aiohttp session, otherwise it'll complain
 
-    def show_stats(self):
+    def print_stats(self):
+        print(self.show_stats)
+        if self.show_stats == False:
+            return
+
         rps = self.total_reqs / (self.stop_time - self.start_time)
         print("Requests per second: " + str(rps))
         print("Requests total: "      + str(self.total_reqs))
@@ -164,8 +169,8 @@ usage: dirb.py [-h] [-m MAX] [-t TIMEOUT] [-s] [url] [wordlist]''')
 
     parser.add_argument('url', type=str, nargs='?')
     parser.add_argument('wordlist', type=str, nargs='?')
-    parser.add_argument('-m', '--max', type=int, help='Max connections')
-    parser.add_argument('-t', '--timeout', type=float, help='Timeout in seconds')
+    parser.add_argument('-m', '--max', type=int, help='Max connections', default=5)
+    parser.add_argument('-t', '--timeout', type=float, help='Timeout in seconds', default=10)
     parser.add_argument('-s', '--stats', action='store_true', help='Show stats')
 
     if len(sys.argv) == 1:
@@ -173,16 +178,19 @@ usage: dirb.py [-h] [-m MAX] [-t TIMEOUT] [-s] [url] [wordlist]''')
         return
 
     args = parser.parse_args()
+    
+    url      = args.url
+    wordlist = args.wordlist
+    timeout  = args.timeout
+    stats    = args.stats
+    maxcon   = args.max
 
-    if not args.url or not args.wordlist:
+    if not url or not wordlist:
         parser.print_help()
         return
 
-    url = args.url
-    wordlist = args.wordlist
-
     loop = asyncio.get_event_loop()
-    scanner = dirb_scan(loop, url, wordlist, timeout=args.timeout)
+    scanner = dirb_scan(loop, url, wordlist, maxcon, timeout, stats)
     loop.run_until_complete(scanner.scan())
     print("total: ", scanner.total)
 
