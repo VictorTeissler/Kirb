@@ -1,2 +1,21 @@
-Implement SSL domain name spidering
-Directory recursion
+Kirb:
+1. Make it faster    
+   * Create interface for http operations
+   * HTTP2 scanning
+
+Kirb-Dirb:
+1. Subdomain brute forcing
+   * SSL domain name spidering
+
+2. Enhance scan
+   * Recursion
+   * Extraction and scanning of links
+   * Handle timeouts
+
+Kirb-Nikto?
+
+Kirb-Subbrute?
+
+Kirb-wfuzz?
+
+Kirb-TubeIgniter??
