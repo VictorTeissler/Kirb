@@ -18,13 +18,11 @@ from kirb import Request
 
 # Implements a dirb-esque scan
 class dirb_scan(object):
-    def __init__(self, loop, ip, wordlist, portlist, connections = 50, ssl=False, timeout=5):
+    def __init__(self, loop, url, wordlist, connections = 50, timeout=5):
         self.loop        = loop
-        self.host        = ip
+        self.url         = url
         self.wordlist    = wordlist
-        self.portlist    = portlist
         self.connections = connections
-        self.ssl         = ssl
         self.timeout     = timeout
         self.dcheck      = []        
         self.total       = 0
@@ -50,15 +48,12 @@ class dirb_scan(object):
                 yield w
 
 
-    def gen_permutations(self, ip, words, ports, ops, on_reply, on_error, ssl=False):
-        for p in ports:
-            for w in words:
-                for op in ops:
-                    if p == '':
-                        continue
-                    url = ip + ':' + p + '/' + w
-                    self.total_reqs += 1
-                    yield Request(url, op, self.on_reply, self.on_error, ssl=ssl)
+    def gen_permutations(self, url, words, ops, on_reply, on_error):
+        for w in words:
+            for op in ops:
+                u = url + '/' + w
+                self.total_reqs += 1
+                yield Request(u, op, self.on_reply, self.on_error)
 
 
     # dirb 401 verification check works by re-issuing the same request with the url suffixed with a '_' character
@@ -112,17 +107,16 @@ class dirb_scan(object):
 
     async def scan(self):
         ops = ['GET']
-        gen_words = self.gen_words_file(wordlist)
-        gen_perms = self.gen_permutations(self.host,
+        gen_words = self.gen_words_file(self.wordlist)
+        gen_perms = self.gen_permutations(self.url,
                                           gen_words,
-                                          self.portlist,
                                           ops,
                                           self.on_reply,
-                                          self.on_error,
-                                          ssl=self.ssl)
+                                          self.on_error)
     
         self.total_reqs = 0
         self.start_time = time.time()
+
         k = Kirb(self.loop, gen_perms, self.connections, timeout=self.timeout)
         await k.run()
 
@@ -152,40 +146,45 @@ class dirb_scan(object):
         t = reply.text()
         if code == 0:
             code = reply.status
-        print("+ " + request.url + ' (CODE:' + str(code) + '|' + request.operation + '|SIZE:' + str(reply_len) + ')')
+        print("+ " + request.url + ' (CODE:' + str(code) + '|' + request.operation + '|SIZE:' + str(reply_len) + ')', flush=True)
         self.total += 1
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='''
- _  ___      _
-| |/ (_)_ __| |__
-| ' /| | '__| '_ \ 
-| . \| | |  | |_) |
-|_|\_\_|_|  |_.__/ v0.1.1''',
-    formatter_class=RawTextHelpFormatter)
+def main():
+    parser = argparse.ArgumentParser(
+        formatter_class=RawTextHelpFormatter,
+        usage=argparse.SUPPRESS,
+        description='''
+ _  ___      _           ____  _      _     
+| |/ (_)_ __| |__       |  _ \(_)_ __| |__  
+| ' /| | '__| '_ \ _____| | | | | '__| '_ \ 
+| . \| | |  | |_) |_____| |_| | | |  | |_) |
+|_|\_\_|_|  |_.__/      |____/|_|_|  |_.__/  v0.1.2
+                                            
+usage: dirb.py [-h] [-m MAX] [-t TIMEOUT] [-s] [url] [wordlist]''')
 
-    parser.add_argument('ip', type=str, nargs='?')
+    parser.add_argument('url', type=str, nargs='?')
     parser.add_argument('wordlist', type=str, nargs='?')
-    parser.add_argument('ports', type=str, nargs='?')
-    parser.add_argument('-s', '--ssl', action='store_true', help='Negotiate SSL')
     parser.add_argument('-m', '--max', type=int, help='Max connections')
     parser.add_argument('-t', '--timeout', type=float, help='Timeout in seconds')
+    parser.add_argument('-s', '--stats', action='store_true', help='Show stats')
 
     if len(sys.argv) == 1:
         parser.print_help()
-        sys.exit(1)
+        return
 
     args = parser.parse_args()
 
-    if not args.ip or not args.wordlist or not args.ports:
+    if not args.url or not args.wordlist:
         parser.print_help()
-        sys.exit(1)
+        return
 
-    ip = args.ip
+    url = args.url
     wordlist = args.wordlist
-    ports = args.ports.split(',')
 
     loop = asyncio.get_event_loop()
-    scanner = dirb_scan(loop, ip, wordlist, ports, ssl=args.ssl, timeout=args.timeout)
+    scanner = dirb_scan(loop, url, wordlist, timeout=args.timeout)
     loop.run_until_complete(scanner.scan())
     print("total: ", scanner.total)
+
+if __name__ == "__main__":
+    main()

@@ -36,6 +36,7 @@ class Kirb(object):
                            'POST'   : self.session.post,
                            'DELETE' : self.session.delete }
 
+
     def set_request_generator(self, gen):
         self.generator = gen
 
@@ -57,12 +58,11 @@ class Kirb(object):
             with async_timeout.timeout(self.timeout, loop=self.session.loop) as cm:
                 request.tries += 1
 
-                if request.ssl == False:
-                    url = 'http://' + request.url
-                elif request.ssl == True:
-                    url = 'https://' + request.url
-                reply = await self.opcalls[request.operation](url, data=request.data, allow_redirects=False)
-                #await reply.text()
+                reply = await self.opcalls[request.operation](
+                        request.url,
+                        data=request.data, 
+                        allow_redirects=False)
+
             await self._on_reply(request, reply)
 
         except aiohttp.ClientOSError as e:
@@ -72,15 +72,6 @@ class Kirb(object):
             await self._on_error(request, e)
 
         self.semaphore.release()
-
-
-    async def _on_reply(self, request, reply):
-        await request.on_reply(request, reply)
-
-
-    async def _on_error(self, request, error):
-        if request.on_error != None:
-            await request.on_error(request, error)
 
 
     async def run(self):
@@ -94,5 +85,17 @@ class Kirb(object):
         await asyncio.gather(*futures) # wait for remaining futures to finish
 
 
+    async def _on_reply(self, request, reply):
+        await request.on_reply(request, reply)
+
+
+    async def _on_error(self, request, error):
+        if request.on_error != None:
+            await request.on_error(request, error)
+
+
     def stop(self):
         self.session.close()
+
+
+    # Thank you for reading

@@ -9,7 +9,7 @@ setup(name="kirb",
       author_email='nope@nope.nope',
       url='zombo.com',
       packages=['kirb'],
-      scripts=['bin/dirb.py'],
+      scripts=['bin/kirb-dirb'],
       install_requires=[
             'aiohttp',
             'async-timeout',
