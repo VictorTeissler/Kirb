@@ -61,7 +61,8 @@ class Kirb(object):
                 reply = await self.opcalls[request.operation](
                         request.url,
                         data=request.data, 
-                        allow_redirects=False)
+                        allow_redirects=False,
+                        ssl=request.ssl)
 
             await self._on_reply(request, reply)
 
